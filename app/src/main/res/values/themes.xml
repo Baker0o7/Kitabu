@@ -188,15 +188,15 @@
 
     <!-- ── Dialogs + overlays (theme-neutral) ── -->
     <style name="KitabuTitle" parent="TextAppearance.Widget.AppCompat.Toolbar.Title">
-        <item name="android:textColor">?attr/kitabu_text_primary</item>
+        <item name="android:textColor">@color/noir_text_primary</item>
         <item name="android:textSize">22sp</item>
         <item name="android:fontFamily">@font/inter_semibold</item>
     </style>
 
     <style name="KitabuDialog" parent="ThemeOverlay.Material3.MaterialAlertDialog">
-        <item name="colorSurface">?attr/kitabu_bg_elevated</item>
-        <item name="colorOnSurface">?attr/kitabu_text_primary</item>
-        <item name="android:textColor">?attr/kitabu_text_primary</item>
+        <item name="colorSurface">@color/noir_bg_elevated</item>
+        <item name="colorOnSurface">@color/noir_text_primary</item>
+        <item name="android:textColor">@color/noir_text_primary</item>
     </style>
 
     <style name="KitabuBottomSheet" parent="Theme.Material3.Dark.BottomSheetDialog">
@@ -204,13 +204,13 @@
     </style>
 
     <style name="KitabuBottomSheetStyle" parent="Widget.Material3.BottomSheet.Modal">
-        <item name="backgroundTint">?attr/kitabu_bg_surface</item>
+        <item name="backgroundTint">@color/noir_bg_surface</item>
     </style>
 
     <style name="KitabuNavView" parent="Widget.MaterialComponents.NavigationView">
-        <item name="android:background">?attr/kitabu_bg_surface</item>
-        <item name="itemTextColor">?attr/kitabu_text_primary</item>
-        <item name="itemIconTint">?attr/kitabu_accent</item>
+        <item name="android:background">@color/noir_bg_surface</item>
+        <item name="itemTextColor">@color/noir_text_primary</item>
+        <item name="itemIconTint">@color/noir_accent</item>
     </style>
 
 </resources>
