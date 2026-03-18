@@ -2,8 +2,7 @@ name: Build & Release APK
 
 on:
   push:
-    tags:
-      - 'v*'
+    tags: ['v*']
   workflow_dispatch:
 
 permissions:
@@ -11,75 +10,68 @@ permissions:
 
 jobs:
   build:
-    name: Build Release APK
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      # ── Checkout ──────────────────────────────────────────────────────────
+      - uses: actions/checkout@v4
 
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
+      # ── JDK 17 ───────────────────────────────────────────────────────────
+      - uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Bootstrap Gradle wrapper
-        run: |
-          GRADLE_VERSION="8.4"
-          curl -fL "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip" \
-            -o /tmp/gradle.zip
-          unzip -q /tmp/gradle.zip -d /tmp/gradle-dist
-          /tmp/gradle-dist/gradle-${GRADLE_VERSION}/bin/gradle wrapper \
-            --gradle-version "${GRADLE_VERSION}" \
-            --project-dir "$(pwd)"
-          chmod +x gradlew
-          ls -lh gradle/wrapper/
-
-      - name: Cache Gradle
-        uses: actions/cache@v4
+      # ── Gradle (handles wrapper jar automatically) ────────────────────────
+      - uses: gradle/actions/setup-gradle@v3
         with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
-          restore-keys: ${{ runner.os }}-gradle-
+          gradle-version: '8.4'
 
-      - name: Provide fonts
+      # ── Point Gradle at the pre-installed Android SDK ────────────────────
+      - name: Write local.properties
+        run: echo "sdk.dir=$ANDROID_HOME" > local.properties
+
+      # ── Inter fonts (DejaVu substitution for CI) ─────────────────────────
+      - name: Provide Inter fonts
         run: |
           mkdir -p app/src/main/res/font
-          DEJAVU="/usr/share/fonts/truetype/dejavu"
-          cp "$DEJAVU/DejaVuSans.ttf"      app/src/main/res/font/inter_regular.ttf
-          cp "$DEJAVU/DejaVuSans.ttf"      app/src/main/res/font/inter_medium.ttf
-          cp "$DEJAVU/DejaVuSans-Bold.ttf" app/src/main/res/font/inter_semibold.ttf
+          D=/usr/share/fonts/truetype/dejavu
+          cp "$D/DejaVuSans.ttf"      app/src/main/res/font/inter_regular.ttf
+          cp "$D/DejaVuSans.ttf"      app/src/main/res/font/inter_medium.ttf
+          cp "$D/DejaVuSans-Bold.ttf" app/src/main/res/font/inter_semibold.ttf
 
+      # ── Accept Android SDK licences ───────────────────────────────────────
+      - name: Accept SDK licences
+        run: yes | sdkmanager --licenses || true
+
+      # ── Build ─────────────────────────────────────────────────────────────
       - name: Build debug APK
-        run: ./gradlew assembleDebug --no-daemon --stacktrace
-        env:
-          GRADLE_OPTS: "-Xmx2g -Dorg.gradle.daemon=false"
-
-      - name: Collect APK
         run: |
-          TAG="${{ github.ref_name }}"
-          [ -z "$TAG" ] && TAG="dev-$(date +%Y%m%d)"
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon --stacktrace
+
+      # ── Package ───────────────────────────────────────────────────────────
+      - name: Package APK
+        run: |
+          TAG="${GITHUB_REF_NAME:-dev}"
           mkdir -p dist
           cp app/build/outputs/apk/debug/app-debug.apk "dist/kitabu-${TAG}.apk"
           echo "APK_NAME=kitabu-${TAG}.apk" >> "$GITHUB_ENV"
-          echo "APK size: $(du -sh dist/kitabu-${TAG}.apk)"
+          du -sh "dist/kitabu-${TAG}.apk"
 
-      - name: Upload APK artifact
-        uses: actions/upload-artifact@v4
+      # ── Upload artifact (always available in Actions tab) ─────────────────
+      - uses: actions/upload-artifact@v4
         with:
           name: ${{ env.APK_NAME }}
           path: dist/${{ env.APK_NAME }}
           retention-days: 30
 
-      - name: Create GitHub Release
+      # ── Publish release (tag pushes only) ─────────────────────────────────
+      - name: Publish GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v1
         with:
           name: "Kitabu ${{ github.ref_name }}"
-          tag_name: ${{ github.ref_name }}
           body: |
             ## 📓 Kitabu ${{ github.ref_name }}
             A full-featured, dark-themed **second brain** notes app for Android.
@@ -99,10 +91,10 @@ jobs:
             ### 📲 Install
             1. Download **`${{ env.APK_NAME }}`** below
             2. On your phone: **Settings → Install unknown apps → Allow**
-            3. Open the APK and install
+            3. Tap the APK to install
 
             ### 🤖 Free AI Setup
-            Get a Gemini key at [aistudio.google.com](https://aistudio.google.com/apikey) → ☰ → Settings
+            Get a Gemini key at [aistudio.google.com](https://aistudio.google.com/apikey) → open app → ☰ → Settings
           files: dist/${{ env.APK_NAME }}
           draft: false
           prerelease: false
