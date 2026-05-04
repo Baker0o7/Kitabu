@@ -188,15 +188,17 @@
     <string name="close">Close</string>
     <string name="all_notes">All Notes</string>
     <string name="ai_button_texts">Ask, chat, find with AI...</string>
-    <string name="api_key_guide_title">How to Get Your Own API Key?</string>
-    <string name="api_key_guide_intro">From Google AI Studio, you can generate a personal API key with a generous free usage limit. This key belongs only to you and you have full control.</string>
-    <string name="api_key_guide_step_1">1. Go to the Google AI Studio website by clicking the button below.</string>
-    <string name="api_key_guide_step_2">2. Sign in with your Google account.</string>
-    <string name="api_key_guide_step_3">3. On the screen that opens, click the \"Create API key\" button.</string>
-    <string name="api_key_guide_step_4">4. You may be asked to create a new project, follow the steps to create it.</string>
-    <string name="api_key_guide_step_5">5. Copy the generated long character string.</string>
-    <string name="api_key_guide_step_6">6. Paste the copied key into the text box below and press the \“Check\” button.</string>
-    <string name="api_key_guide_button">Go to Google AI Studio</string>
+    <string name="api_key_guide_title">How to Get Your API Key?</string>
+    <string name="api_key_guide_intro">You need an API key from an OpenAI-compatible LLM provider (e.g. Groq, OpenAI, Ollama, LM Studio). This key belongs only to you and you have full control.</string>
+    <string name="api_key_guide_step_1">1. Choose an LLM provider and create an account.</string>
+    <string name="api_key_guide_step_2">2. Navigate to the API keys section in your dashboard.</string>
+    <string name="api_key_guide_step_3">3. Click \"Create API Key\" and copy the generated key.</string>
+    <string name="api_key_guide_step_4">4. Paste the key below and set the correct API endpoint URL.</string>
+    <string name="api_key_guide_step_5">5. Click \"Save and Check\" to verify your connection.</string>
+    <string name="api_key_guide_step_6">6. For local LLMs (Ollama, LM Studio), use your local server URL as the endpoint.</string>
+    <string name="api_key_guide_button">Get API Key (Groq - Free Tier)</string>
+    <string name="llm_api_endpoint">API Endpoint URL</string>
+    <string name="llm_api_endpoint_description">OpenAI-compatible endpoint (e.g. https://api.groq.com/openai/v1)</string>
     <string name="perplexity_api_key_guide_intro">You need an API key to use Perplexity\'s chat API. Once you have your key, paste it here.</string>
     <string name="perplexity_api_key_guide_step_1">1. Go to the Perplexity AI website.</string>
     <string name="perplexity_api_key_guide_step_2">2. Log in to your account (or create a new account).</string>
@@ -255,7 +257,7 @@
     <string name="translate">Translate</string>
     <string name="original_text">Original language</string>
     <string name="translation_failed">Translation failed</string>
-    <string name="gemini_api_key">Gemini API Key</string>
+    <string name="gemini_api_key">LLM API Key</string>
     <string name="perplexity_api_key">Perplexity API Key</string>
     <string name="save_and_check">Save And Check</string>
     <string name="successfully_verified">Successfully verified and recorded!</string>
@@ -343,9 +345,10 @@
     <string name="dream_journal_ai_title">AirNote Kai - Dream Edition</string>
     <string name="dream_not_found">Your dream could not be found! Please describe your dream.</string>
     <string name="instagram">Official | @AirNoteApp</string>
-    <string name="gemini_models_25" translatable="false">Gemini 2.5</string>
-    <string name="gemini_models_20" translatable="false">Gemini 2.0</string>
-    <string name="gemini_models_15" translatable="false">Gemini 1.5</string>
+    <string name="llm_models_llama3_70b" translatable="false">LLaMA 3 70B</string>
+    <string name="llm_models_llama3_8b" translatable="false">LLaMA 3 8B</string>
+    <string name="llm_models_mixtral_8x7b" translatable="false">Mixtral 8x7B</string>
+    <string name="llm_models_gemma2_9b" translatable="false">Gemma 2 9B</string>
     <string name="perplexity_models_pplx_7b_online" translatable="false">PPLX 7B</string>
     <string name="perplexity_models_sonar_medium_online" translatable="false">PPLX Sonar-M</string>
     <string name="model_in_use_prefix">Active Model: %1$s</string>
@@ -354,7 +357,7 @@
     <string name="found_note">I found these notes: \n%1$s</string>
     <string name="ask_perplexity_placeholder">Search on Perplexity...</string>
     <string name="perplexity_api_not_empty">The Perplexity API key cannot be empty!</string>
-    <string name="ai_service_gemini">Gemini AI Service</string>
+    <string name="ai_service_gemini">LLM AI Service</string>
     <string name="ai_service_perplexity">Perplexity AI Service</string>
     <string name="perplexity_ai_service_description">ATTENTION: This API only supports Perplexity Pro user APIs.</string>
     <string name="enabled">Enabled</string>

@@ -13,12 +13,6 @@ import com.babelsoftware.airnote.domain.model.ChatMessage
 import com.babelsoftware.airnote.domain.model.Note
 import com.babelsoftware.airnote.domain.model.Participant
 import com.babelsoftware.airnote.domain.repository.SettingsRepository
-import com.google.ai.client.generativeai.GenerativeModel
-import com.google.ai.client.generativeai.type.Content
-import com.google.ai.client.generativeai.type.Part
-import com.google.ai.client.generativeai.type.TextPart
-import com.google.ai.client.generativeai.type.content
-import com.google.ai.client.generativeai.type.generationConfig
 import com.google.gson.annotations.SerializedName
 import com.google.mlkit.common.model.DownloadConditions
 import com.google.mlkit.common.model.RemoteModelManager
@@ -33,7 +27,9 @@ import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsChannel
+import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
+import io.ktor.http.contentType
 import io.ktor.utils.io.readUTF8Line
 import jakarta.inject.Inject
 import kotlinx.coroutines.Dispatchers
@@ -50,10 +46,10 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.suspendCoroutine
 
 enum class AiMode {
-    NOTE_ASSISTANT, // For factual, note-taking tasks.
-    CREATIVE_MIND,  // For brainstorming and creative writing.
-    ACADEMIC_RESEARCHER,// For structured, evidence-based academic writing.
-    PROFESSIONAL_STRATEGIST // For clear, goal-oriented business communication.
+    NOTE_ASSISTANT,
+    CREATIVE_MIND,
+    ACADEMIC_RESEARCHER,
+    PROFESSIONAL_STRATEGIST
 }
 
 enum class AiAction {
@@ -117,39 +113,54 @@ data class AiActionCommand(
     val search_term: String?
 )
 
+// --- OpenAI-compatible API data classes ---
+
 @Serializable
-private data class PplxMessage(
+private data class ChatMessageDto(
     @SerialName("role") val role: String,
     @SerialName("content") val content: String
 )
 
 @Serializable
-private data class PplxRequest(
+private data class ChatCompletionRequest(
     @SerialName("model") val model: String,
     @SerialName("stream") val stream: Boolean,
-    @SerialName("messages") val messages: List<PplxMessage>
+    @SerialName("messages") val messages: List<ChatMessageDto>,
+    @SerialName("temperature") val temperature: Double? = null,
+    @SerialName("max_tokens") val maxTokens: Int? = null
 )
 
 @Serializable
-private data class PplxSource(
-    @SerialName("title") val title: String,
-    @SerialName("url") val url: String
-)
-
-@Serializable
-private data class PplxDelta(
+private data class ChatCompletionDelta(
     @SerialName("content") val content: String? = null
 )
 
 @Serializable
-private data class PplxChoice(
-    @SerialName("delta") val delta: PplxDelta? = null,
-    @SerialName("sources") val sources: List<PplxSource>? = null
+private data class ChatCompletionChoice(
+    @SerialName("delta") val delta: ChatCompletionDelta? = null,
+    @SerialName("message") val message: ChatMessageDto? = null,
+    @SerialName("index") val index: Int = 0,
+    @SerialName("finish_reason") val finishReason: String? = null
 )
 
 @Serializable
-private data class PplxStreamResponse(
-    @SerialName("choices") val choices: List<PplxChoice>
+private data class ChatCompletionResponse(
+    @SerialName("choices") val choices: List<ChatCompletionChoice>
+)
+
+@Serializable
+private data class ChatCompletionChunk(
+    @SerialName("choices") val choices: List<ChatCompletionChoice>
+)
+
+@Serializable
+private data class ModelInfo(
+    @SerialName("id") val id: String
+)
+
+@Serializable
+private data class ModelListResponse(
+    @SerialName("data") val data: List<ModelInfo>
 )
 
 class GeminiRepository @Inject constructor(
@@ -159,19 +170,50 @@ class GeminiRepository @Inject constructor(
     private val json: Json
 ) {
     private companion object {
-        const val DEFAULT_TEMPERATURE = 0.7f
-        const val CREATIVE_TEMPERATURE = 0.9f
-        const val PERPLEXITY_API_URL = "https://api.perplexity.ai/chat/completions"
+        const val DEFAULT_TEMPERATURE = 0.7
+        const val CREATIVE_TEMPERATURE = 0.9
     }
+
     class ApiKeyMissingException(message: String) : Exception(message)
+
+    private suspend fun getApiEndpoint(): String {
+        val settings = settingsRepository.settings.first()
+        return settings.llmApiEndpoint.ifBlank { LlmModels.defaultEndpoint }
+    }
+
+    private suspend fun getChatCompletionsUrl(): String {
+        val endpoint = getApiEndpoint().trimEnd('/')
+        return "$endpoint/chat/completions"
+    }
 
     suspend fun validateApiKey(apiKey: String, modelName: String): Result<Unit> = withContext(Dispatchers.IO) {
         if (apiKey.isBlank()) {
             return@withContext Result.failure(ApiKeyMissingException("API key cannot be empty."))
         }
         return@withContext try {
-            GenerativeModel(modelName = modelName, apiKey = apiKey).countTokens("test")
-            Result.success(Unit)
+            val url = getChatCompletionsUrl()
+            val request = ChatCompletionRequest(
+                model = modelName,
+                stream = false,
+                messages = listOf(ChatMessageDto(role = "user", content = "Hello")),
+                maxTokens = 5
+            )
+            val response = httpClient.post(url) {
+                header("Authorization", "Bearer $apiKey")
+                contentType(ContentType.Application.Json)
+                setBody(request)
+            }
+            if (response.status == HttpStatusCode.OK) {
+                Result.success(Unit)
+            } else {
+                Result.failure(Exception("API returned status: ${response.status.value}"))
+            }
+        } catch (e: ClientRequestException) {
+            if (e.response.status == HttpStatusCode.Unauthorized) {
+                Result.failure(Exception("API key is invalid or unauthorized."))
+            } else {
+                Result.failure(e)
+            }
         } catch (e: Exception) {
             e.printStackTrace()
             Result.failure(e)
@@ -187,25 +229,27 @@ class GeminiRepository @Inject constructor(
         val modelToValidate = settings.selectedPerplexityModelName
 
         try {
-            val testRequest = PplxRequest(
+            val request = ChatCompletionRequest(
                 model = modelToValidate,
                 stream = false,
-                messages = listOf(PplxMessage(role = "user", content = "Hello"))
+                messages = listOf(ChatMessageDto(role = "user", content = "Hello")),
+                maxTokens = 5
             )
 
-            val response = httpClient.post(PERPLEXITY_API_URL) {
+            val response = httpClient.post("https://api.perplexity.ai/chat/completions") {
                 header("Authorization", "Bearer $apiKey")
-                setBody(testRequest)
+                contentType(ContentType.Application.Json)
+                setBody(request)
             }
 
             return@withContext if (response.status == HttpStatusCode.OK) {
                 Result.success(Unit)
             } else {
-                Result.failure(Exception("Perplexity API'sine bağlanılamadı. Durum Kodu: ${response.status.value}"))
+                Result.failure(Exception("Perplexity API returned status: ${response.status.value}"))
             }
         } catch (e: ClientRequestException) {
             if (e.response.status == HttpStatusCode.Unauthorized) {
-                Result.failure(Exception("Perplexity API anahtarı geçersiz veya izni yok."))
+                Result.failure(Exception("Perplexity API key is invalid or unauthorized."))
             } else {
                 Result.failure(e)
             }
@@ -221,22 +265,11 @@ class GeminiRepository @Inject constructor(
             return Result.failure(ApiKeyMissingException(stringProvider.getString(R.string.error_no_user_api_key)))
         }
         if (action == AiAction.CHANGE_TONE) {
-            require(tone != null) { "CHANGE_TONE eylemi için bir ton belirtilmelidir." }
+            require(tone != null) { "CHANGE_TONE action requires a tone." }
         }
 
         val modelName = settingsRepository.settings.first().selectedModelName
-        val generativeModel: GenerativeModel = try {
-            GenerativeModel(
-                modelName = modelName,
-                apiKey = apiKey,
-                generationConfig = generationConfig {
-                    this.temperature = if (aiMode == AiMode.CREATIVE_MIND) CREATIVE_TEMPERATURE else DEFAULT_TEMPERATURE
-                }
-            )
-        } catch (e: Exception) {
-            e.printStackTrace()
-            return Result.failure(e)
-        }
+        val temperature = if (aiMode == AiMode.CREATIVE_MIND) CREATIVE_TEMPERATURE else DEFAULT_TEMPERATURE
 
         val systemPrompt = when (aiMode) {
             AiMode.NOTE_ASSISTANT -> stringProvider.getString(R.string.system_prompt_note_assistant)
@@ -259,14 +292,34 @@ class GeminiRepository @Inject constructor(
                 }
                 stringProvider.getString(R.string.prompt_change_tone_template, stringProvider.getString(tonePromptResId), text)
             }
-            AiAction.TRANSLATE -> "" // This action is handled on-device
+            AiAction.TRANSLATE -> ""
         }
 
-        val finalPrompt = "$systemPrompt\n\n---\n\n$userPrompt"
+        val url = getChatCompletionsUrl()
+        val request = ChatCompletionRequest(
+            model = modelName,
+            stream = false,
+            messages = listOf(
+                ChatMessageDto(role = "system", content = systemPrompt),
+                ChatMessageDto(role = "user", content = userPrompt)
+            ),
+            temperature = temperature
+        )
 
         return try {
-            val response = generativeModel.generateContent(finalPrompt)
-            response.text?.let { Result.success(it) } ?: Result.failure(Exception("API'den boş yanıt alındı."))
+            val response = httpClient.post(url) {
+                header("Authorization", "Bearer $apiKey")
+                contentType(ContentType.Application.Json)
+                setBody(request)
+            }
+            val body = response.bodyAsChannel().readUTF8Line() ?: ""
+            val completion = json.decodeFromString<ChatCompletionResponse>(body)
+            val text = completion.choices.firstOrNull()?.message?.content
+            if (text != null) {
+                Result.success(text)
+            } else {
+                Result.failure(Exception("Empty response from API."))
+            }
         } catch (e: Exception) {
             e.printStackTrace()
             Result.failure(e)
@@ -278,33 +331,31 @@ class GeminiRepository @Inject constructor(
         apiKey: String
     ): Flow<String> = flow {
         if (apiKey.isBlank()) {
-            throw ApiKeyMissingException("Perplexity API anahtarı ayarlanmamış.")
+            throw ApiKeyMissingException("Perplexity API key not set.")
         }
 
         val settings = settingsRepository.settings.first()
         val modelToUse = settings.selectedPerplexityModelName
 
-        val messages = mutableListOf<PplxMessage>()
-        messages.add(PplxMessage(role = "system", content = "Be helpful and concise."))
+        val messages = mutableListOf<ChatMessageDto>()
+        messages.add(ChatMessageDto(role = "system", content = "Be helpful and concise."))
         history.filter { !it.isLoading && it.participant != Participant.ERROR }.forEach { msg ->
-            messages.add(PplxMessage(
+            messages.add(ChatMessageDto(
                 role = if (msg.participant == Participant.USER) "user" else "assistant",
                 content = msg.text
             ))
         }
 
-        val requestBody = PplxRequest(
+        val requestBody = ChatCompletionRequest(
             model = modelToUse,
             stream = true,
             messages = messages
         )
 
-        val sourcesSet = mutableSetOf<PplxSource>()
-        val responseTextBuilder = StringBuilder()
-
         try {
-            val response = httpClient.post(PERPLEXITY_API_URL) {
+            val response = httpClient.post("https://api.perplexity.ai/chat/completions") {
                 header("Authorization", "Bearer $apiKey")
+                contentType(ContentType.Application.Json)
                 setBody(requestBody)
             }
 
@@ -321,45 +372,27 @@ class GeminiRepository @Inject constructor(
                     }
 
                     try {
-                        val streamResponse = json.decodeFromString<PplxStreamResponse>(jsonData)
-
+                        val streamResponse = json.decodeFromString<ChatCompletionChunk>(jsonData)
                         val choice = streamResponse.choices.firstOrNull()
                         if (choice != null) {
                             val content = choice.delta?.content
                             if (content != null) {
-                                responseTextBuilder.append(content)
                                 emit(content)
-                            }
-
-                            val sources = choice.sources
-                            if (!sources.isNullOrEmpty()) {
-                                sourcesSet.addAll(sources)
                             }
                         }
                     } catch (e: Exception) {
-                        Log.w("PerplexityParseError", "JSON ayrıştırma hatası: $jsonData", e)
+                        Log.w("PerplexityParseError", "JSON parse error: $jsonData", e)
                     }
                 }
             }
-
-            if (sourcesSet.isNotEmpty()) {
-                val sourcesString = buildString {
-                    append("\n\n\n**Sources:**")
-                    sourcesSet.forEachIndexed { index, source ->
-                        append("\n[${index + 1}] ${source.title} (${source.url})")
-                    }
-                }
-                emit(sourcesString)
-            }
-
         } catch (e: Exception) {
-            Log.e("PerplexityRequestError", "Perplexity isteği başarısız", e)
+            Log.e("PerplexityRequestError", "Perplexity request failed", e)
             throw e
         }
 
     }.catch {
-        Log.e("PerplexityFlowError", "Akış hatası", it)
-        emit(stringProvider.getString(R.string.error_api_request_failed, it.message ?: "Bilinmeyen hata"))
+        Log.e("PerplexityFlowError", "Flow error", it)
+        emit(stringProvider.getString(R.string.error_api_request_failed, it.message ?: "Unknown error"))
     }.flowOn(Dispatchers.IO)
 
 
@@ -375,13 +408,7 @@ class GeminiRepository @Inject constructor(
         }
 
         val modelName = settingsRepository.settings.first().selectedModelName
-        val generativeModel = GenerativeModel(
-            modelName = modelName,
-            apiKey = apiKey,
-            generationConfig = generationConfig {
-                this.temperature = if (aiMode == AiMode.CREATIVE_MIND) CREATIVE_TEMPERATURE else DEFAULT_TEMPERATURE
-            }
-        )
+        val temperature = if (aiMode == AiMode.CREATIVE_MIND) CREATIVE_TEMPERATURE else DEFAULT_TEMPERATURE
 
         val systemPrompt = when (aiMode) {
             AiMode.NOTE_ASSISTANT -> stringProvider.getString(R.string.system_prompt_note_assistant)
@@ -400,11 +427,18 @@ class GeminiRepository @Inject constructor(
             AiAssistantAction.SUGGEST_A_TITLE -> stringProvider.getString(R.string.prompt_assistant_suggest_title, noteDescription)
         }
 
-        val finalPrompt = "$systemPrompt\n\n---\n\n$userPrompt"
+        val url = getChatCompletionsUrl()
+        val request = ChatCompletionRequest(
+            model = modelName,
+            stream = true,
+            messages = listOf(
+                ChatMessageDto(role = "system", content = systemPrompt),
+                ChatMessageDto(role = "user", content = userPrompt)
+            ),
+            temperature = temperature
+        )
 
-        generativeModel.generateContentStream(finalPrompt).collect { chunk ->
-            emit(chunk.text ?: "")
-        }
+        streamChatCompletion(url, apiKey, request)
     }.catch {
         emit(stringProvider.getString(R.string.error_api_request_failed, it.message ?: "Unknown error"))
     }
@@ -413,21 +447,15 @@ class GeminiRepository @Inject constructor(
         history: List<ChatMessage>,
         apiKey: String,
         aiMode: AiMode = AiMode.NOTE_ASSISTANT,
-        mentionedNote: com.babelsoftware.airnote.domain.model.Note? = null,
-        attachment: Part? = null
+        mentionedNote: Note? = null,
+        imageBase64: String? = null
     ): Flow<String> = flow {
         if (apiKey.isBlank()) {
             throw ApiKeyMissingException(stringProvider.getString(R.string.error_no_user_api_key))
         }
 
         val modelName = settingsRepository.settings.first().selectedModelName
-        val generativeModel = GenerativeModel(
-            modelName = modelName,
-            apiKey = apiKey,
-            generationConfig = generationConfig {
-                this.temperature = if (aiMode == AiMode.CREATIVE_MIND) CREATIVE_TEMPERATURE else DEFAULT_TEMPERATURE
-            }
-        )
+        val temperature = if (aiMode == AiMode.CREATIVE_MIND) CREATIVE_TEMPERATURE else DEFAULT_TEMPERATURE
 
         val baseSystemPrompt = when (aiMode) {
             AiMode.NOTE_ASSISTANT -> stringProvider.getString(R.string.system_prompt_note_assistant)
@@ -436,9 +464,8 @@ class GeminiRepository @Inject constructor(
             AiMode.PROFESSIONAL_STRATEGIST -> stringProvider.getString(R.string.system_prompt_professional_strategist)
         }
 
-        val chatHistoryForModel = mutableListOf<Content>()
-        chatHistoryForModel.add(content("user") { text(baseSystemPrompt) })
-        chatHistoryForModel.add(content("model") { text("OK.") })
+        val messages = mutableListOf<ChatMessageDto>()
+        messages.add(ChatMessageDto(role = "system", content = baseSystemPrompt))
 
         if (mentionedNote != null) {
             val noteContextPrompt = stringProvider.getString(
@@ -446,40 +473,28 @@ class GeminiRepository @Inject constructor(
                 mentionedNote.name,
                 mentionedNote.description
             )
-            chatHistoryForModel.add(content("user") { text(noteContextPrompt) })
+            messages.add(ChatMessageDto(role = "user", content = noteContextPrompt))
             val ackPrompt = stringProvider.getString(R.string.prompt_mention_ack, mentionedNote.name)
-            chatHistoryForModel.add(content("model") { text(ackPrompt) })
+            messages.add(ChatMessageDto(role = "assistant", content = ackPrompt))
         }
 
-        val userHistoryContent = history
-            .filter { it.participant != Participant.ERROR && !it.isLoading }
-            .map { msg ->
-                content(role = if (msg.participant == Participant.USER) "user" else "model") {
-                    text(msg.text)
-                }
+        history.filter { it.participant != Participant.ERROR && !it.isLoading }
+            .forEach { msg ->
+                messages.add(ChatMessageDto(
+                    role = if (msg.participant == Participant.USER) "user" else "assistant",
+                    content = msg.text
+                ))
             }
-        chatHistoryForModel.addAll(userHistoryContent)
 
+        val url = getChatCompletionsUrl()
+        val request = ChatCompletionRequest(
+            model = modelName,
+            stream = true,
+            messages = messages,
+            temperature = temperature
+        )
 
-        val lastMessageContent = chatHistoryForModel.lastOrNull() ?: return@flow
-        val historyWithoutLast = chatHistoryForModel.dropLast(1)
-        val chat = generativeModel.startChat(history = historyWithoutLast)
-
-        val finalMessageToSend: Content
-        if (attachment != null) {
-            val lastUserText = (lastMessageContent.parts.firstOrNull() as? TextPart)?.text ?: ""
-
-            finalMessageToSend = content(lastMessageContent.role) {
-                part(attachment)
-                text(lastUserText)
-            }
-        } else {
-            finalMessageToSend = lastMessageContent
-        }
-
-        chat.sendMessageStream(finalMessageToSend).collect { chunk ->
-            emit(chunk.text ?: "")
-        }
+        streamChatCompletion(url, apiKey, request)
     }.catch {
         emit(stringProvider.getString(R.string.error_api_request_failed, it.message ?: "Unknown error"))
     }
@@ -490,18 +505,7 @@ class GeminiRepository @Inject constructor(
         }
 
         val modelName = settingsRepository.settings.first().selectedModelName
-        val generativeModel: GenerativeModel = try {
-            GenerativeModel(
-                modelName = modelName,
-                apiKey = apiKey,
-                generationConfig = generationConfig {
-                    this.temperature = if (aiMode == AiMode.CREATIVE_MIND) CREATIVE_TEMPERATURE else DEFAULT_TEMPERATURE
-                }
-            )
-        } catch (e: Exception) {
-            e.printStackTrace()
-            return Result.failure(e)
-        }
+        val temperature = if (aiMode == AiMode.CREATIVE_MIND) CREATIVE_TEMPERATURE else DEFAULT_TEMPERATURE
 
         val systemPrompt = when (aiMode) {
             AiMode.NOTE_ASSISTANT -> stringProvider.getString(R.string.system_prompt_note_assistant)
@@ -510,11 +514,32 @@ class GeminiRepository @Inject constructor(
             AiMode.PROFESSIONAL_STRATEGIST -> stringProvider.getString(R.string.system_prompt_professional_strategist)
         }
         val userPrompt = stringProvider.getString(R.string.prompt_assistant_draft_anything, topic)
-        val finalPrompt = "$systemPrompt\n\n---\n\n$userPrompt"
+
+        val url = getChatCompletionsUrl()
+        val request = ChatCompletionRequest(
+            model = modelName,
+            stream = false,
+            messages = listOf(
+                ChatMessageDto(role = "system", content = systemPrompt),
+                ChatMessageDto(role = "user", content = userPrompt)
+            ),
+            temperature = temperature
+        )
 
         return try {
-            val response = generativeModel.generateContent(finalPrompt)
-            response.text?.let { Result.success(it) } ?: Result.failure(Exception("API'den boş yanıt alındı."))
+            val response = httpClient.post(url) {
+                header("Authorization", "Bearer $apiKey")
+                contentType(ContentType.Application.Json)
+                setBody(request)
+            }
+            val body = response.bodyAsChannel().readUTF8Line() ?: ""
+            val completion = json.decodeFromString<ChatCompletionResponse>(body)
+            val text = completion.choices.firstOrNull()?.message?.content
+            if (text != null) {
+                Result.success(text)
+            } else {
+                Result.failure(Exception("Empty response from API."))
+            }
         } catch (e: Exception) {
             e.printStackTrace()
             Result.failure(e)
@@ -523,7 +548,7 @@ class GeminiRepository @Inject constructor(
 
     suspend fun generateDraftFromAttachment(
         prompt: String,
-        attachment: Part,
+        imageBase64: String,
         apiKey: String,
         aiMode: AiMode
     ): Result<String> {
@@ -531,21 +556,8 @@ class GeminiRepository @Inject constructor(
             return Result.failure(ApiKeyMissingException(stringProvider.getString(R.string.error_no_user_api_key)))
         }
 
-        val generativeModel: GenerativeModel = try {
-            val modelName = settingsRepository.settings.first().selectedModelName
-            val temperature = if (aiMode == AiMode.CREATIVE_MIND) CREATIVE_TEMPERATURE else DEFAULT_TEMPERATURE
-
-            GenerativeModel(
-                modelName = modelName,
-                apiKey = apiKey,
-                generationConfig = generationConfig {
-                    this.temperature = temperature
-                }
-            )
-        } catch (e: Exception) {
-            e.printStackTrace()
-            return Result.failure(e)
-        }
+        val modelName = settingsRepository.settings.first().selectedModelName
+        val temperature = if (aiMode == AiMode.CREATIVE_MIND) CREATIVE_TEMPERATURE else DEFAULT_TEMPERATURE
 
         val systemPrompt = when (aiMode) {
             AiMode.NOTE_ASSISTANT -> stringProvider.getString(R.string.system_prompt_note_assistant)
@@ -555,25 +567,40 @@ class GeminiRepository @Inject constructor(
         }
 
         val userPrompt = """
-        Kullanıcı prompt'u: "$prompt"
-        
-        Ekli dosyayı/görseli analiz et ve bu prompt'a göre bir not taslağı oluştur.
-        Cevabını MUTLAKA şu formatta ver:
-        TITLE: [buraya başlığı yaz]
-        
-        CONTENT: [buraya not içeriğini yaz]
+        User prompt: "$prompt"
+
+        Analyze the attached image and create a note draft based on this prompt.
+        You MUST respond in this format:
+        TITLE: [write title here]
+
+        CONTENT: [write note content here]
         """.trimIndent()
 
-        val finalPrompt = "$systemPrompt\n\n---\n\n$userPrompt"
-
-        val inputContent = content {
-            part(attachment)
-            text(finalPrompt)
-        }
+        val url = getChatCompletionsUrl()
+        val request = ChatCompletionRequest(
+            model = modelName,
+            stream = false,
+            messages = listOf(
+                ChatMessageDto(role = "system", content = systemPrompt),
+                ChatMessageDto(role = "user", content = userPrompt)
+            ),
+            temperature = temperature
+        )
 
         return try {
-            val response = generativeModel.generateContent(inputContent)
-            response.text?.let { Result.success(it) } ?: Result.failure(Exception("API'den boş yanıt alındı."))
+            val response = httpClient.post(url) {
+                header("Authorization", "Bearer $apiKey")
+                contentType(ContentType.Application.Json)
+                setBody(request)
+            }
+            val body = response.bodyAsChannel().readUTF8Line() ?: ""
+            val completion = json.decodeFromString<ChatCompletionResponse>(body)
+            val text = completion.choices.firstOrNull()?.message?.content
+            if (text != null) {
+                Result.success(text)
+            } else {
+                Result.failure(Exception("Empty response from API."))
+            }
         } catch (e: Exception) {
             e.printStackTrace()
             Result.failure(e)
@@ -592,13 +619,6 @@ class GeminiRepository @Inject constructor(
 
         try {
             val modelName = settingsRepository.settings.first().selectedModelName
-            val generativeModel = GenerativeModel(
-                modelName = modelName,
-                apiKey = apiKey,
-                generationConfig = generationConfig {
-                    temperature = 0.4f
-                }
-            )
 
             val systemPrompt = buildString {
                 append(stringProvider.getString(R.string.system_prompt_command_chat_header))
@@ -610,31 +630,40 @@ class GeminiRepository @Inject constructor(
                 append(stringProvider.getString(R.string.system_prompt_json_instruction))
             }
 
-            val historyForModel = mutableListOf<Content>()
-            val initialContextPrompt = buildString {
-                append(systemPrompt)
-                append("\n\n")
-                append(stringProvider.getString(R.string.system_prompt_context_header, noteContext))
-            }
-            historyForModel.add(content("user") { text(initialContextPrompt) })
-            historyForModel.add(content("model") { text("OK. I am ready. Waiting for user request.") })
+            val messages = mutableListOf<ChatMessageDto>()
+            messages.add(ChatMessageDto(role = "system", content = systemPrompt))
+            messages.add(ChatMessageDto(role = "system", content = stringProvider.getString(R.string.system_prompt_context_header, noteContext)))
 
-            val previousMessages = chatHistory
-                .filter { !it.isLoading && it.participant != Participant.ERROR }
-                .map { msg ->
-                    content(role = if (msg.participant == Participant.USER) "user" else "model") {
-                        text(msg.text)
-                    }
+            chatHistory.filter { !it.isLoading && it.participant != Participant.ERROR }
+                .forEach { msg ->
+                    messages.add(ChatMessageDto(
+                        role = if (msg.participant == Participant.USER) "user" else "assistant",
+                        content = msg.text
+                    ))
                 }
-            historyForModel.addAll(previousMessages)
 
             val finalRequestPrompt = stringProvider.getString(R.string.system_prompt_request_header, userRequest)
-            val chat = generativeModel.startChat(history = historyForModel)
-            val response = chat.sendMessage(finalRequestPrompt)
-            val responseText = response.text
+            messages.add(ChatMessageDto(role = "user", content = finalRequestPrompt))
+
+            val url = getChatCompletionsUrl()
+            val request = ChatCompletionRequest(
+                model = modelName,
+                stream = false,
+                messages = messages,
+                temperature = 0.4
+            )
+
+            val response = httpClient.post(url) {
+                header("Authorization", "Bearer $apiKey")
+                contentType(ContentType.Application.Json)
+                setBody(request)
+            }
+            val body = response.bodyAsChannel().readUTF8Line() ?: ""
+            val completion = json.decodeFromString<ChatCompletionResponse>(body)
+            val responseText = completion.choices.firstOrNull()?.message?.content
 
             if (responseText.isNullOrBlank()) {
-                Result.failure(Exception("API'den boş yanıt alındı."))
+                Result.failure(Exception("Empty response from API."))
             } else {
                 val cleanJson = responseText.trim()
                     .removePrefix("```json")
@@ -665,17 +694,11 @@ class GeminiRepository @Inject constructor(
 
         try {
             val modelName = settingsRepository.settings.first().selectedModelName
-            val generativeModel = GenerativeModel(
-                modelName = modelName,
-                apiKey = apiKey,
-                generationConfig = generationConfig {
-                    this.temperature = if (aiMode == AiMode.CREATIVE_MIND) 0.5f else 0.2f
-                }
-            )
+            val temperature = if (aiMode == AiMode.CREATIVE_MIND) 0.5 else 0.2
+
             val systemPrompt = stringProvider.getString(R.string.system_prompt_automation_engine)
-            val historyForModel = mutableListOf<Content>()
-            historyForModel.add(content("user") { text(systemPrompt) })
-            historyForModel.add(content("model") { text("OK. I am ready to generate JSON action plans.") })
+            val messages = mutableListOf<ChatMessageDto>()
+            messages.add(ChatMessageDto(role = "system", content = systemPrompt))
 
             if (mentionedNote != null) {
                 val noteContextPrompt = """
@@ -683,25 +706,39 @@ class GeminiRepository @Inject constructor(
                 Title: "${mentionedNote.name}"
                 Content: "${mentionedNote.description}"
             """.trimIndent()
-                historyForModel.add(content("user") { text(noteContextPrompt) })
-                historyForModel.add(content("model") { text("OK. Context for note '${mentionedNote.name}' has been loaded.") })
+                messages.add(ChatMessageDto(role = "user", content = noteContextPrompt))
+                messages.add(ChatMessageDto(role = "assistant", content = "OK. Context for note '${mentionedNote.name}' has been loaded."))
             }
 
-            val previousMessages = chatHistory
-                .filter { !it.isLoading && it.participant != Participant.ERROR }
-                .map { msg ->
-                    content(role = if (msg.participant == Participant.USER) "user" else "model") {
-                        text(msg.text)
-                    }
+            chatHistory.filter { !it.isLoading && it.participant != Participant.ERROR }
+                .forEach { msg ->
+                    messages.add(ChatMessageDto(
+                        role = if (msg.participant == Participant.USER) "user" else "assistant",
+                        content = msg.text
+                    ))
                 }
-            historyForModel.addAll(previousMessages)
 
-            val chat = generativeModel.startChat(history = historyForModel)
-            val response = chat.sendMessage(userRequest)
-            val responseText = response.text
+            messages.add(ChatMessageDto(role = "user", content = userRequest))
+
+            val url = getChatCompletionsUrl()
+            val request = ChatCompletionRequest(
+                model = modelName,
+                stream = false,
+                messages = messages,
+                temperature = temperature
+            )
+
+            val response = httpClient.post(url) {
+                header("Authorization", "Bearer $apiKey")
+                contentType(ContentType.Application.Json)
+                setBody(request)
+            }
+            val body = response.bodyAsChannel().readUTF8Line() ?: ""
+            val completion = json.decodeFromString<ChatCompletionResponse>(body)
+            val responseText = completion.choices.firstOrNull()?.message?.content
 
             if (responseText.isNullOrBlank()) {
-                Result.failure(Exception("AI'den boş yanıt alındı."))
+                Result.failure(Exception("Empty response from AI."))
             } else {
                 val cleanJson = responseText.trim()
                     .removePrefix("```json")
@@ -709,7 +746,7 @@ class GeminiRepository @Inject constructor(
                     .removeSuffix("```")
                     .trim()
 
-                Log.d("GeminiRepository", "Raw JSON Plan: $cleanJson")
+                Log.d("LlmRepository", "Raw JSON Plan: $cleanJson")
                 Result.success(cleanJson)
             }
 
@@ -718,6 +755,42 @@ class GeminiRepository @Inject constructor(
             Result.failure(e)
         }
     }
+
+    // --- Helper: stream a chat completion and emit text chunks ---
+    private suspend fun kotlinx.coroutines.flow.FlowCollector<String>.streamChatCompletion(
+        url: String,
+        apiKey: String,
+        request: ChatCompletionRequest
+    ) {
+        val response = httpClient.post(url) {
+            header("Authorization", "Bearer $apiKey")
+            contentType(ContentType.Application.Json)
+            setBody(request)
+        }
+
+        val channel = response.bodyAsChannel()
+
+        while (!channel.isClosedForRead) {
+            val line = channel.readUTF8Line()
+            if (line.isNullOrBlank()) continue
+
+            if (line.startsWith("data:")) {
+                val jsonData = line.substring(5).trim()
+                if (jsonData == "[DONE]") break
+
+                try {
+                    val chunk = json.decodeFromString<ChatCompletionChunk>(jsonData)
+                    val content = chunk.choices.firstOrNull()?.delta?.content
+                    if (content != null) {
+                        emit(content)
+                    }
+                } catch (e: Exception) {
+                    Log.w("LlmStreamParse", "JSON parse error: $jsonData", e)
+                }
+            }
+        }
+    }
+
     val supportedLanguages = mapOf(
         TranslateLanguage.ENGLISH to "English",
         TranslateLanguage.TURKISH to "Türkçe",
@@ -836,7 +909,7 @@ class GeminiRepository @Inject constructor(
             Result.success(translatedLines.joinToString("\n"))
 
         } catch (e: Exception) {
-            Log.e("TranslateError", "Satır satır çeviri sırasında hata oluştu", e)
+            Log.e("TranslateError", "Translation error", e)
             Result.failure(e)
         } finally {
             translator.close()

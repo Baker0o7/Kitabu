@@ -3,24 +3,30 @@ package com.babelsoftware.airnote.data.repository
 import androidx.annotation.StringRes
 import com.babelsoftware.airnote.R
 
-data class GeminiModelInfo(
+data class LlmModelInfo(
     val name: String,
     @StringRes val displayNameResId: Int
 )
 
-object GeminiModels {
+object LlmModels {
     val supportedModels = listOf(
-        GeminiModelInfo(
-            name = "gemini-2.5-flash",
-            displayNameResId = R.string.gemini_models_25
+        LlmModelInfo(
+            name = "llama3-70b-8192",
+            displayNameResId = R.string.llm_models_llama3_70b
         ),
-        GeminiModelInfo(
-            name = "gemini-2.0-flash-001",
-            displayNameResId = R.string.gemini_models_20
+        LlmModelInfo(
+            name = "llama3-8b-8192",
+            displayNameResId = R.string.llm_models_llama3_8b
         ),
-        GeminiModelInfo(
-            name = "gemini-1.5-flash-latest",
-            displayNameResId = R.string.gemini_models_15
+        LlmModelInfo(
+            name = "mixtral-8x7b-32768",
+            displayNameResId = R.string.llm_models_mixtral_8x7b
+        ),
+        LlmModelInfo(
+            name = "gemma2-9b-it",
+            displayNameResId = R.string.llm_models_gemma2_9b
         )
     )
+
+    val defaultEndpoint = "https://api.groq.com/openai/v1"
 }

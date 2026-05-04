@@ -68,7 +68,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.navigation.NavController
 import com.babelsoftware.airnote.R
-import com.babelsoftware.airnote.data.repository.GeminiModels
+import com.babelsoftware.airnote.data.repository.LlmModels
 import com.babelsoftware.airnote.presentation.screens.settings.SettingsScaffold
 import com.babelsoftware.airnote.presentation.screens.settings.model.IconResource
 import com.babelsoftware.airnote.presentation.screens.settings.model.SettingsViewModel
@@ -139,6 +139,12 @@ fun AirNoteAiSettingsScreen(navController: NavController, settingsViewModel: Set
                         isLast = false,
                         radius = settings.cornerRadius
                     )
+                )
+            }
+            item {
+                EndpointSetting(
+                    settingsViewModel = settingsViewModel,
+                    shape = RoundedCornerShape(0.dp)
                 )
             }
             item {
@@ -277,12 +283,82 @@ private fun ApiKeySetting(
 }
 
 @Composable
+private fun EndpointSetting(
+    settingsViewModel: SettingsViewModel,
+    shape: RoundedCornerShape
+) {
+    val settings = settingsViewModel.settings.value
+    var tempEndpoint by remember { mutableStateOf(settings.llmApiEndpoint) }
+
+    SettingsBox(
+        settingsViewModel = settingsViewModel,
+        title = stringResource(R.string.llm_api_endpoint),
+        description = settings.llmApiEndpoint.ifBlank { LlmModels.defaultEndpoint },
+        icon = IconResource.Vector(Icons.Rounded.Memory),
+        actionType = ActionType.CUSTOM,
+        radius = shape,
+        customAction = { onDismiss ->
+            Dialog(
+                onDismissRequest = onDismiss,
+                properties = DialogProperties(usePlatformDefaultWidth = false)
+            ) {
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth(0.9f)
+                        .padding(16.dp),
+                    shape = RoundedCornerShape(32.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerLow,
+                    tonalElevation = 4.dp
+                ) {
+                    Column(
+                        modifier = Modifier.padding(24.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            text = stringResource(R.string.llm_api_endpoint),
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(bottom = 16.dp)
+                        )
+                        OutlinedTextField(
+                            value = tempEndpoint,
+                            onValueChange = { tempEndpoint = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text(stringResource(R.string.llm_api_endpoint)) },
+                            placeholder = { Text(LlmModels.defaultEndpoint) },
+                            singleLine = true,
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = stringResource(R.string.llm_api_endpoint_description),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Button(
+                            onClick = {
+                                val endpoint = tempEndpoint.ifBlank { LlmModels.defaultEndpoint }
+                                settingsViewModel.update(settings.copy(llmApiEndpoint = endpoint))
+                                onDismiss()
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(stringResource(R.string.save_and_check))
+                        }
+                    }
+                }
+            }
+        }
+    )
+}
+
+@Composable
 private fun ModelChoiceSetting(
     settingsViewModel: SettingsViewModel,
     shape: RoundedCornerShape
 ) {
     val settings = settingsViewModel.settings.value
-    val selectedModelInfo = GeminiModels.supportedModels.find {
+    val selectedModelInfo = LlmModels.supportedModels.find {
         it.name == settings.selectedModelName
     }
     val selectedModelDisplayName = if (selectedModelInfo != null) {
@@ -464,7 +540,7 @@ private fun ModelChoicePopup(
     onDismiss: () -> Unit
 ) {
     val settings = settingsViewModel.settings.value
-    val models = GeminiModels.supportedModels
+    val models = LlmModels.supportedModels
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -793,7 +869,7 @@ private fun OfflineTranslationSettings(settingsViewModel: SettingsViewModel) {
 @Composable
 private fun ApiKeyGuide() {
     val uriHandler = LocalUriHandler.current
-    val geminiStudioUrl = "https://aistudio.google.com/app/apikey"
+    val groqConsoleUrl = "https://console.groq.com/keys"
     val context = LocalContext.current
 
     Column(
@@ -821,11 +897,11 @@ private fun ApiKeyGuide() {
                 Button(
                     onClick = {
                         try {
-                            uriHandler.openUri(geminiStudioUrl)
+                            uriHandler.openUri(groqConsoleUrl)
                         } catch (e: ActivityNotFoundException) {
-                            Toast.makeText(context, "Web tarayıcısı bulunamadı.", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, "Web browser not found.", Toast.LENGTH_SHORT).show()
                         } catch (e: IllegalArgumentException) {
-                            Toast.makeText(context, "URL açılamadı. Cihazınızda bir web tarayıcı yüklü mü?", Toast.LENGTH_LONG).show()
+                            Toast.makeText(context, "Could not open URL.", Toast.LENGTH_LONG).show()
                         }
                     },
                     modifier = Modifier.fillMaxWidth()

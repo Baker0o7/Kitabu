@@ -6,6 +6,7 @@ import android.graphics.ImageDecoder
 import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
+import android.util.Base64
 import android.util.Log
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AutoAwesome
@@ -40,9 +41,6 @@ import com.babelsoftware.airnote.domain.usecase.FolderUseCase
 import com.babelsoftware.airnote.domain.usecase.NoteUseCase
 import com.babelsoftware.airnote.presentation.components.DecryptionResult
 import com.babelsoftware.airnote.presentation.components.EncryptionHelper
-import com.google.ai.client.generativeai.type.ImagePart
-import com.google.ai.client.generativeai.type.Part
-import com.google.ai.client.generativeai.type.TextPart
 import com.google.gson.Gson
 import com.google.gson.JsonSyntaxException
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -656,7 +654,7 @@ class HomeViewModel @Inject constructor(
         val currentState = _chatState.value
         val apiKey = getApiKeyToUse()
 
-        val attachmentPart: Part? = try {
+        val imageBase64: String? = try {
             if (mimeType.startsWith("image/")) {
                 val bitmap = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                     ImageDecoder.decodeBitmap(ImageDecoder.createSource(context.contentResolver, uri))
@@ -664,21 +662,16 @@ class HomeViewModel @Inject constructor(
                     @Suppress("DEPRECATION")
                     MediaStore.Images.Media.getBitmap(context.contentResolver, uri)
                 }
-                ImagePart(bitmap)
+                bitmapToBase64(bitmap)
             } else if (mimeType == "text/plain") {
                 val textContent = readTextFromUri(uri)
                 if (textContent.isBlank()) throw Exception(stringProvider.getString(R.string.file_empty_or_not_read))
-                TextPart(textContent)
+                // For text files, prepend to message
+                null
             } else {
                 throw IllegalArgumentException("Unsupported file type: $mimeType")
             }
         } catch (e: Exception) {
-            onAttachmentRemoved()
-            sendChatOnly(userMessage)
-            return@launch
-        }
-
-        if (attachmentPart == null) {
             onAttachmentRemoved()
             sendChatOnly(userMessage)
             return@launch
@@ -711,7 +704,7 @@ class HomeViewModel @Inject constructor(
                 apiKey,
                 _aiMode.value,
                 null,
-                attachmentPart
+                imageBase64
             )
                 .collect { chunk ->
                     responseBuilder.append(chunk)
@@ -878,7 +871,7 @@ class HomeViewModel @Inject constructor(
 
         val apiKey = getApiKeyToUse()
 
-        val attachmentPart: Part? = try {
+        val imageBase64: String? = try {
             if (mimeType.startsWith("image/")) {
                 val bitmap: Bitmap = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                     ImageDecoder.decodeBitmap(ImageDecoder.createSource(context.contentResolver, uri))
@@ -886,22 +879,22 @@ class HomeViewModel @Inject constructor(
                     @Suppress("DEPRECATION")
                     MediaStore.Images.Media.getBitmap(context.contentResolver, uri)
                 }
-                ImagePart(bitmap)
+                bitmapToBase64(bitmap)
             } else if (mimeType == "text/plain") {
                 val textContent = readTextFromUri(uri)
                 if (textContent.isBlank()) throw Exception(stringProvider.getString(R.string.file_empty_or_not_read))
-                TextPart(textContent)
+                null
             } else {
-                throw IllegalArgumentException("Desteklenmeyen dosya türü: $mimeType")
+                throw IllegalArgumentException("Unsupported file type: $mimeType")
             }
         } catch (e: Exception) {
             handleFailure(e)
             null
         }
 
-        if (attachmentPart == null) return@launch
+        if (imageBase64 == null && mimeType.startsWith("image/")) return@launch
 
-        geminiRepository.generateDraftFromAttachment(prompt, attachmentPart, apiKey, _aiMode.value)
+        geminiRepository.generateDraftFromAttachment(prompt, imageBase64 ?: "", apiKey, _aiMode.value)
             .onSuccess { result ->
                 parseAndSetDraft(result, prompt, if (mimeType.startsWith("image/")) uri else null)
             }
@@ -936,6 +929,13 @@ class HomeViewModel @Inject constructor(
             e.printStackTrace()
             ""
         }
+    }
+
+    private fun bitmapToBase64(bitmap: Bitmap): String {
+        val outputStream = java.io.ByteArrayOutputStream()
+        bitmap.compress(Bitmap.CompressFormat.JPEG, 85, outputStream)
+        val byteArray = outputStream.toByteArray()
+        return Base64.encodeToString(byteArray, Base64.NO_WRAP)
     }
 
     // --- Note and Folder Functions ---

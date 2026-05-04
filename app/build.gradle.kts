@@ -98,7 +98,6 @@ dependencies {
     ksp(libs.hilt.android.compiler)
     ksp(libs.hilt.compile)
 
-    implementation("com.google.ai.client.generativeai:generativeai:0.9.0")
     implementation("androidx.security:security-crypto:1.1.0")
     implementation("com.udojava:EvalEx:2.7")
     implementation("androidx.activity:activity-compose:1.11.0")

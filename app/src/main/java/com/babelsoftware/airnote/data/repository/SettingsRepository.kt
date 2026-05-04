@@ -52,6 +52,7 @@ private object PreferencesKeys {
     val SHOW_FOLDER_INDICATOR = booleanPreferencesKey("show_folder_indicator")
     val USE_AIRNOTE_API = booleanPreferencesKey("use_airnote_api")
     val SELECTED_MODEL_NAME = stringPreferencesKey("selected_model_name")
+    val LLM_API_ENDPOINT = stringPreferencesKey("llm_api_endpoint")
     val DESKTOP_MODE_ENABLED = booleanPreferencesKey("desktop_mode_enabled")
     val DESKTOP_MODE_AI_ENABLED = booleanPreferencesKey("desktop_mode_ai_enabled")
     val OPEN_TO_LAST_USED_FOLDER = booleanPreferencesKey("open_to_last_used_folder")
@@ -91,7 +92,8 @@ class SettingsRepositoryImpl(private val context: Context) : SettingsRepository 
             fontSize = preferences[PreferencesKeys.FONT_SIZE] ?: 13,
             showFolderIndicator = preferences[PreferencesKeys.SHOW_FOLDER_INDICATOR] ?: false,
             useAirNoteApi = preferences[PreferencesKeys.USE_AIRNOTE_API] ?: false,
-            selectedModelName = preferences[PreferencesKeys.SELECTED_MODEL_NAME] ?: "gemini-2.0-flash-001",
+            selectedModelName = preferences[PreferencesKeys.SELECTED_MODEL_NAME] ?: "llama3-70b-8192",
+            llmApiEndpoint = preferences[PreferencesKeys.LLM_API_ENDPOINT] ?: "https://api.groq.com/openai/v1",
             desktopModeEnabled = preferences[PreferencesKeys.DESKTOP_MODE_ENABLED] ?: true,
             desktopModeAiEnabled = preferences[PreferencesKeys.DESKTOP_MODE_AI_ENABLED] ?: true,
             openToLastUsedFolder = preferences[PreferencesKeys.OPEN_TO_LAST_USED_FOLDER] ?: false,
@@ -131,6 +133,7 @@ class SettingsRepositoryImpl(private val context: Context) : SettingsRepository 
             preferences[PreferencesKeys.SHOW_FOLDER_INDICATOR] = settings.showFolderIndicator
             preferences[PreferencesKeys.USE_AIRNOTE_API] = settings.useAirNoteApi
             preferences[PreferencesKeys.SELECTED_MODEL_NAME] = settings.selectedModelName
+            preferences[PreferencesKeys.LLM_API_ENDPOINT] = settings.llmApiEndpoint
             preferences[PreferencesKeys.DESKTOP_MODE_ENABLED] = settings.desktopModeEnabled
             preferences[PreferencesKeys.DESKTOP_MODE_AI_ENABLED] = settings.desktopModeAiEnabled
             preferences[PreferencesKeys.OPEN_TO_LAST_USED_FOLDER] = settings.openToLastUsedFolder
